@@ -1,81 +1,97 @@
 
 import { Alert, AlertDescription } from '../compoents/ui/Alert';
-import { Button } from '../compoents/ui/Button';
-import React, { useState, useRef, useCallback } from 'react';
+import { Button } from '../compoents/ui/Button';import React, { useState, useRef, useCallback } from 'react';
 import { Camera, XCircle } from 'lucide-react';
-import jsQR from 'jsqr';
-
-
-
 
 const QRCodeScanner = () => {
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState('');
+  const [debug, setDebug] = useState(''); // Debug information
   const videoRef = useRef(null);
-  const canvasRef = useRef(null);
   const streamRef = useRef(null);
 
   const startScanning = async () => {
     try {
       setError('');
       setResult('');
-      
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' }
-      });
+      setDebug('Requesting camera access...');
+
+      // List available cameras
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cameras = devices.filter(device => device.kind === 'videoinput');
+      setDebug(prev => `${prev}\nFound ${cameras.length} cameras`);
+
+      // Request camera access with specific constraints
+      const constraints = {
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      setDebug(prev => `${prev}\nCamera access granted`);
       
       streamRef.current = stream;
+      
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        setScanning(true);
+        setDebug(prev => `${prev}\nVideo source set`);
         
-        // Start frame analysis once video is playing
-        videoRef.current.addEventListener('loadedmetadata', () => {
-          videoRef.current.play();
-          requestAnimationFrame(analyzeFrame);
-        });
+        // Wait for video to be ready
+        videoRef.current.onloadedmetadata = () => {
+          setDebug(prev => `${prev}\nVideo metadata loaded`);
+          videoRef.current.play()
+            .then(() => {
+              setDebug(prev => `${prev}\nVideo playing`);
+              setScanning(true);
+            })
+            .catch(err => {
+              setDebug(prev => `${prev}\nPlay error: ${err.message}`);
+              setError(`Failed to play video: ${err.message}`);
+            });
+        };
       }
     } catch (err) {
-      setError('Unable to access camera. Please ensure you have granted camera permissions.');
-      console.error('Camera access error:', err);
+      const errorMessage = `Camera access error: ${err.message}`;
+      setError(errorMessage);
+      setDebug(prev => `${prev}\n${errorMessage}`);
+      
+      if (err.name === 'NotAllowedError') {
+        setError('Camera access denied. Please grant camera permissions and try again.');
+      } else if (err.name === 'NotFoundError') {
+        setError('No camera found. Please ensure your device has a camera.');
+      } else if (err.name === 'NotReadableError') {
+        setError('Camera is in use by another application. Please close other apps using the camera.');
+      } else {
+        setError(`Unable to access camera: ${err.message}`);
+      }
     }
   };
 
   const stopScanning = useCallback(() => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current.getTracks().forEach(track => {
+        track.stop();
+        setDebug(prev => `${prev}\nStopped track: ${track.kind}`);
+      });
       streamRef.current = null;
     }
     setScanning(false);
+    setDebug(prev => `${prev}\nScanning stopped`);
   }, []);
 
-  const analyzeFrame = useCallback(() => {
-    if (!scanning || !videoRef.current || !canvasRef.current) return;
-
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-
-    // Set canvas dimensions to match video
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    // Get image data for QR code analysis
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const code = jsQR(imageData.data, imageData.width, imageData.height);
-
-    if (code) {
-      // QR Code found
-      setResult(code.data);
-      stopScanning();
-    } else {
-      // Continue scanning
-      requestAnimationFrame(analyzeFrame);
-    }
-  }, [scanning, stopScanning]);
+  // Clean up on unmount
+  React.useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
 
   return (
     <div className="w-full max-w-md mx-auto p-4 space-y-4">
@@ -88,10 +104,6 @@ const QRCodeScanner = () => {
               playsInline
               muted
               className="w-full h-64 bg-black rounded-lg"
-            />
-            <canvas
-              ref={canvasRef}
-              className="hidden"
             />
             <div className="absolute inset-0 border-2 border-blue-500 rounded-lg pointer-events-none">
               <div className="absolute inset-0 border-2 border-transparent">
@@ -132,6 +144,15 @@ const QRCodeScanner = () => {
             <div className="break-all">
               <strong>Scanned QR Code:</strong> {result}
             </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Debug information */}
+      {debug && (
+        <Alert>
+          <AlertDescription>
+            <pre className="whitespace-pre-wrap text-xs">{debug}</pre>
           </AlertDescription>
         </Alert>
       )}
