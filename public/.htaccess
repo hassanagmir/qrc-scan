@@ -1,3 +1,0 @@
-Copy<IfModule mod_headers.c>
-    Header set Permissions-Policy "camera=*"
-</IfModule>
